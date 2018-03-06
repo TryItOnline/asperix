@@ -1,0 +1,31 @@
+
+ARCHIVE :
+
+Once you have decompressed the archive, you will be provided 
+with a directory named ASPeRiX0.2.5 and containing
+
+. COPYING : a file containing the GNU general public license
+
+. Examples : a directory containing some examples of normal logic programs
+
+. manual.pdf :  a file containing an user manual of ASPeRiX
+
+. README : this file
+
+. SRC : a directory containing all source files for ASPeRiX
+
+
+
+
+INSTALLATION (tested only on Linux System)
+
+. Prerequisite: Flex and Bison must be installed on your computer
+
+. Go to ASPeRiX0.2.5/SRC directory and run make all
+
+. Then, from ASPeRiX0.2.5 directory, you can use our system by launching
+      ./asperix f k
+  if you want to compute k answer sets of the program in file f
+
+. More information about the usage of ASPeRiX are available in the user manual.
+

@@ -1,0 +1,812 @@
+/* *************************************************************************
+ * Copyright (C) 2007-2013 
+ * Claire Lefèvre, Pascal Nicolas, Stéphane Ngoma, Christopher Béatrix
+ * 
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 3
+ * of the License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ *
+ * claire.lefevre@univ-angers.fr	christopher.beatrix@univ-angers.fr
+ ****************************************************************************/ 
+
+
+%require "2.4"
+
+
+/* programmes logiques normaux avec variables : la syntaxe d'un programme */
+%{
+
+#include <iostream>
+#include <map>
+#include <sstream>
+#include <string>
+#include <cstdio>                   
+#include "affect_literal.hpp"
+#include "arguments.hpp"
+#include "arith_expr.hpp"
+#include "basic_literal.hpp"
+#include "built_in_literal.hpp"
+#include "constraint_rule.hpp"
+#include "definition.hpp"
+#include "fact_rule.hpp"
+#include "func_term.hpp"
+#include "graph.hpp"
+#include "list.hpp"
+#include "literal.hpp"
+#include "negative_literal.hpp"
+#include "normal_rule.hpp"
+#include "num_const.hpp"
+#include "operator.hpp"
+#include "parser.lex.hpp"
+#include "positive_literal.hpp"
+#include "predicate.hpp"
+#include "program.hpp"
+#include "range_literal.hpp"
+#include "range_term.hpp"
+#include "relational_literal.hpp"
+#include "rule.hpp"
+#include "symb_const.hpp"
+#include "term.hpp"
+#include "variable.hpp"
+
+
+#define YYERROR_VERBOSE
+#define USE(VALUE) /*empty*/
+
+
+void yyerror(const std::string&);
+
+void printErrorRule(const char * = NULL);
+
+void addRule(Program&, BasicLiteral*, Body*, const variableSet&, Graph&);
+
+
+
+bool defaultShow;
+int nregle;
+bool contradictory;
+
+Program *prog;
+Graph *graph;
+
+Literal::Vector litVect;
+MapStrVar map;
+variableSet set;
+stringSet hideSet;
+stringSet showSet;
+
+%}
+
+
+%code requires {
+
+class Body;
+class List;
+
+}
+
+%code provides {
+
+Program* readProg(const char*, bool);
+
+}
+
+%union{
+    std::string* chaine;
+    int num;
+    opEnum oper;
+    Term* pterm;
+    Variable* pvar;
+    SymbConst* pconst;
+    Literal* pliteral;
+    BasicLiteral* pbaslit;
+    Predicate* ppred;
+    Body* pBody;
+    Argument* tVect;
+    List* plist;
+}
+
+
+%token NOT SI PP EQ NEQ GE GT LE LT AFFECT HIDE SHOW INCLUDE
+%token<chaine> CONST_SYMB CONST_SYMB_NEG VARIABLE BUILT_IN
+%token<num> CONST_NUM
+%token<oper> PLUS_OP MINUS_OP MULT_OP DIV_OP MOD_OP ABS_OP
+
+%type<tVect>  liste_termes  liste_termes_etendu liste_range_termes
+%type<pterm> terme terme_etendu constant constant_num expr_arith expr_arith_bis expr_arith_ter range range_bound  fonction fonction_etendu
+%type<plist> liste liste_etendu
+%type<pvar> variable built_in
+%type<pconst> constant_symb
+%type<pliteral> litteral expr_bool affectation atome_etendu
+%type<pbaslit> tete atome_tete atome_neg range_atome
+%type<pBody> corps
+
+%left PLUS_OP MINUS_OP
+%left MULT_OP DIV_OP MOD_OP
+
+
+%destructor { delete $$; } <chaine>
+%destructor {} <num> <oper>
+
+%destructor {} <pterm> <pvar> <pconst> <plist>
+%destructor { delete $$; } <pliteral> <pbaslit> <pBody> <tVect>
+
+%%
+
+prog :
+    /* rien */
+  	| prog regle
+  	| prog commande
+	;
+
+regle :
+  	tete '.'				{ 	
+								std::ostringstream oss;
+								oss << *$1 << '.';  // if an exception is thrown, $1 seems to be freed
+								try {
+									nregle++;
+									if (litVect.empty())    // The head doesn't contain any computing operation
+											prog->addFactRule(new FactRule($1, set));
+									else {
+										Body* b = new Body();
+										for (Literal::Vector::const_iterator i = litVect.begin(); i != litVect.end(); i++)
+											b->addLiteral(*i);
+										litVect.clear();
+										prog->addNormalRule(new NormalRule($1, b, set, *graph));
+										set.clear();
+									}
+								}
+								catch (const ContradictoryConclusion&) {
+									  contradictory = true;
+									  std::cout << oss.str() << std::endl;
+								}
+								catch (const LogicExcept& e) {
+									  printErrorRule(e.what());
+									  yynerrs++;
+									  set.clear();
+									  map.clear();
+								}
+							}
+  	| tete SI corps '.'		{ 	
+								try {
+									nregle++;
+									if ($3->containsNotLiteral($1)) {   // body- contains head literal(resp. body+ if head is negative)
+										delete $1;
+										prog->addConstraintRule(new ConstraintRule($3, set, *graph));
+									}
+									else
+										prog->addNormalRule(new NormalRule($1, $3, set, *graph));
+								}
+								catch (const LogicExcept& e) {
+									printErrorRule(e.what());
+									yynerrs++; 
+								}
+								set.clear();
+								map.clear();
+							}
+	| SI corps '.'			{ 	
+								try {
+									  nregle++;
+									  prog->addConstraintRule(new ConstraintRule($2, set, *graph));
+								}
+								catch (const LogicExcept& e) {
+									printErrorRule(e.what());
+									yynerrs++;
+								}
+								set.clear();
+								map.clear();
+							}
+	| error '.'				{ 	
+								nregle++;
+								map.clear();
+								for (variableSet::iterator it = set.begin(); it != set.end(); ++it)
+									delete *it;
+								set.clear();
+								for (Literal::Vector::iterator it = litVect.begin(); it != litVect.end(); ++it)
+									delete *it;
+								litVect.clear();
+								printErrorRule();
+								yyerrok;
+							}
+	;
+
+tete :
+ 	atome_tete				{ $$ = $1;}
+  	| range_atome			{ $$ = $1;}
+	;
+
+corps :
+  	litteral					{ 	
+									$$ = new Body();
+							  		for (Literal::Vector::const_iterator i = litVect.begin(); i != litVect.end(); i++)
+										$$->addLiteral(*i);
+									litVect.clear();
+									$$->addLiteral($1);
+								}
+	| corps ',' litteral		{ 	
+									for (Literal::Vector::const_iterator i = litVect.begin(); i != litVect.end(); i++)
+										$1->addLiteral(*i);
+									litVect.clear();
+									$1->addLiteral($3);
+									$$ = $1;
+								}
+	;
+
+litteral :
+  	atome_etendu								{ $$ = $1;}
+  	| NOT atome_neg								{	
+													$$ = new NegativeLiteral(*$2); 
+													delete $2;
+												}
+  	| NOT BUILT_IN '(' ')'						{	
+													$$ = new BuiltInLiteral(*$2, NULL, false);
+													delete $2;
+												}
+  	| NOT BUILT_IN '(' liste_termes_etendu ')'	{	
+													$$ = new BuiltInLiteral(*$2, $4, false);
+													delete $2;
+												}
+	;
+
+atome_tete :    // atome sans expressions relationnelles ni affectation (tête)
+  	CONST_SYMB								{	
+												$$ = new BasicLiteral($1, NULL, *graph);
+												delete $1;
+											}
+  	| CONST_SYMB_NEG						{	
+												$$ = new BasicLiteral($1, NULL, *graph);
+												delete $1;
+											}
+  	| CONST_SYMB '(' liste_termes ')'		{	
+												$$ = new BasicLiteral($1, $3, *graph);
+												delete $1;
+											}
+  	| CONST_SYMB_NEG '(' liste_termes ')'	{	
+												$$ = new BasicLiteral($1, $3, *graph);
+												delete $1;
+											}
+	;
+
+atome_neg : // atome sans expressions relationnelles ni affectation (corps-)
+  	CONST_SYMB										{	
+														$$ = new BasicLiteral($1, NULL, *graph);
+														delete $1;
+													}
+  	| CONST_SYMB_NEG								{
+														$$ = new BasicLiteral($1, NULL, *graph);
+														delete $1;
+													}
+  	| CONST_SYMB '(' liste_termes_etendu ')'		{
+														$$ = new BasicLiteral($1, $3, *graph);
+														delete $1;
+													}
+  	| CONST_SYMB_NEG '(' liste_termes_etendu ')'	{
+														$$ = new BasicLiteral($1, $3, *graph);
+														delete $1;
+													}
+	;
+
+atome_etendu :  // atome avec expressions relationnelles et affectations.(corps+)
+  	CONST_SYMB										{
+														$$ = new PositiveLiteral($1, NULL, *graph);
+														delete $1;
+													}
+  	| CONST_SYMB_NEG								{
+														$$ = new PositiveLiteral($1, NULL, *graph);
+														delete $1;
+													}
+  	| CONST_SYMB '(' liste_termes_etendu ')'		{
+														$$ = new PositiveLiteral($1, $3, *graph);
+														delete $1;
+													}
+  	| CONST_SYMB_NEG '(' liste_termes_etendu ')'	{
+														$$ = new PositiveLiteral($1, $3, *graph);
+														delete $1;
+													}
+  	| BUILT_IN '(' ')'								{
+														$$ = new BuiltInLiteral(*$1);
+														delete $1;
+													}
+  	| MINUS_OP BUILT_IN '(' ')'						{
+														$$ = new BuiltInLiteral(*$2, NULL, false);
+														USE($1);
+														delete $2;
+													}
+  	| BUILT_IN '(' liste_termes_etendu ')'			{
+														$$ = new BuiltInLiteral(*$1, $3);
+														delete $1;
+													}
+  	| MINUS_OP BUILT_IN '(' liste_termes_etendu ')'	{
+														$$ = new BuiltInLiteral(*$2, $4, false);
+														USE($1);
+														delete $2;
+													}
+  	| expr_bool										{ $$ = $1;}
+  	| affectation									{ $$ = $1;}
+  	;
+
+liste_termes :
+  	terme											{
+														$$ = new Argument();
+														$$->push_back($1);
+													}
+  	| liste_termes ',' terme						{
+														$1->push_back($3);
+														$$ = $1;
+													}
+	;
+
+terme :
+  	constant		{ $$ = $1;}
+  	| variable		{ $$ = $1;}
+  	| expr_arith	{ $$ = $1;}
+  	| fonction		{ $$ = $1;}
+  	| built_in		{ $$ = $1;}
+	;
+
+constant :
+	constant_symb		{ $$ = $1;}
+	| constant_num		{ $$ = $1;}
+	;
+
+fonction :
+  	CONST_SYMB '(' liste_termes ')'		{
+											try {
+												$$ = FuncTerm::new_FuncTerm(*$1, $3);
+											}
+											catch (const OutOfRangeFuncTerm&) {
+												std::cerr << "too deep functional term " << std::endl;
+												yynerrs++;
+												YYERROR;
+											}
+											delete $1;
+										}
+  	| liste								{ $$ = $1;}
+	;
+
+liste :
+  	'[' ']'							{
+										$$ = List::getEmptyList();
+									}
+  	| '[' liste_termes ']'			{
+										try {
+											$$ = List::new_List($2);
+										}
+										catch (const OutOfRangeFuncTerm&) {
+											std::cerr << "too deep functional term " << std::endl;
+											yynerrs++;
+											YYERROR;
+										}
+									}
+  	| '[' terme '|' liste ']'		{
+										try {
+											$$ = List::new_List($2, $4);
+										}
+										catch (const OutOfRangeFuncTerm&) {
+											std::cerr << "too deep functional term " << std::endl;
+											yynerrs++;
+											YYERROR;
+										}
+									}
+  	| '[' terme '|' variable ']'	{
+										try {
+											$$ = List::new_List($2, $4);
+										}
+										catch (const OutOfRangeFuncTerm&) {
+											std::cerr << "too deep functional term " << std::endl;
+											yynerrs++;
+											YYERROR;
+										}
+									}
+  	| '[' terme '|' built_in ']'	{
+										try {
+											$$ = List::new_List($2, $4);
+										}
+										catch (const OutOfRangeFuncTerm&) {
+											std::cerr << "too deep functional term " << std::endl;
+											yynerrs++;
+											YYERROR;
+										}
+									}
+	;
+
+liste_termes_etendu :   // idem liste_termes mais avec traitement spécial des expressions arithmétiques (sorties des atomes et mises sous forme d'affectations)
+  	terme_etendu								{
+													$$ = new Argument();
+													$$->push_back($1);
+												}
+  	| liste_termes_etendu ',' terme_etendu		{
+													$1->push_back($3);
+													$$ = $1;
+												}
+	;
+
+terme_etendu :
+ 	constant				{ $$ = $1;}
+  	| variable				{ $$ = $1;}
+  	| expr_arith			{
+								Variable* v = new Variable("");
+								set.insert(v);
+								litVect.push_back(new AffectLiteral(v, $1));    // literal v=$1
+								$$ = v;
+							}
+  	| fonction_etendu		{ $$ = $1;}
+  	| built_in				{ $$ = $1;}
+	;
+
+fonction_etendu :
+  	CONST_SYMB '(' liste_termes_etendu ')'		{
+													try {
+														$$ = FuncTerm::new_FuncTerm(*$1, $3);
+													}
+													catch (const OutOfRangeFuncTerm&) {
+														std::cerr << "too deep functional term " << std::endl;
+														yynerrs++;
+														YYERROR;
+													}
+													delete $1;
+												}
+  	| liste_etendu								{ $$ = $1;}
+	;
+
+liste_etendu :
+  	'[' ']'										{
+													$$ = List::getEmptyList();
+												}
+  	| '[' liste_termes_etendu ']'				{
+													try {
+														$$ = List::new_List($2);
+													}
+													catch (const OutOfRangeFuncTerm&) {
+														std::cerr << "too deep functional term " << std::endl;
+														yynerrs++;
+														YYERROR;
+													}
+												}
+  	| '[' terme_etendu '|' liste_etendu ']'		{
+													try {
+														$$ = List::new_List($2, $4);
+													}
+													catch (const OutOfRangeFuncTerm&) {
+														std::cerr << "too deep functional term " << std::endl;
+														yynerrs++;
+														YYERROR;
+													}
+												}
+  	| '[' terme_etendu '|' variable ']'			{
+													try {
+														$$ = List::new_List($2, $4);
+													}
+													catch (const OutOfRangeFuncTerm&) {
+														std::cerr << "too deep functional term " << std::endl;
+														yynerrs++;
+														YYERROR;
+													}
+												}
+  	| '[' terme_etendu '|' built_in ']'			{
+													try {
+														$$ = List::new_List($2, $4);
+													}
+													catch (const OutOfRangeFuncTerm&) {
+														std::cerr << "too deep functional term " << std::endl;
+														yynerrs++;
+														YYERROR;
+													}
+												}
+	;
+
+range_atome :
+  	CONST_SYMB '(' liste_range_termes ')'			{
+														$$ = new RangeLiteral($1, $3, *graph);
+														delete $1;
+													}
+  	| CONST_SYMB_NEG '(' liste_range_termes ')'		{
+														$$ = new RangeLiteral($1, $3, *graph);
+														delete $1;
+													}
+	;
+
+liste_range_termes :
+  	range								{
+											$$ = new Argument();
+											$$->push_back($1);
+										}
+  	| liste_range_termes ',' range		{
+											$1->push_back($3);
+											$$ = $1;
+										}
+	;
+
+range :
+  	range_bound PP range_bound			{
+											$$ = RangeTerm::new_RangeTerm($1, $3);
+										}
+	;
+
+range_bound :
+  	constant_num	{ $$= $1;}
+  	| variable		{ $$= $1;}
+	;
+
+expr_bool :
+	terme_etendu EQ terme_etendu		{$$ = new EqLiteral($1, $3);}
+	| terme_etendu NEQ terme_etendu		{$$ = new NeqLiteral($1, $3);}
+	| terme_etendu GE terme_etendu		{$$ = new GeLiteral($1, $3);}
+	| terme_etendu GT terme_etendu		{$$ = new GtLiteral($1, $3);}
+	| terme_etendu LE terme_etendu		{$$ = new GeLiteral($3, $1);}
+	| terme_etendu LT terme_etendu		{$$ = new GtLiteral($3, $1);}
+	;
+
+affectation :
+  	variable AFFECT expr_arith_bis							{
+																$$ = new AffectLiteral($1, $3);
+															}
+  	| variable AFFECT fonction								{
+																$$ = new AffectLiteral($1, $3);
+															}
+	| variable AFFECT constant_symb 						{
+																$$ = new AffectLiteral($1, $3);
+															}
+  	| variable AFFECT BUILT_IN '(' ')'						{
+																Argument* args = new Argument();
+																args->push_back($1);
+																$$ = new BuiltInLiteral(*$3, args);
+																delete $3;
+															}
+  	| variable AFFECT BUILT_IN '(' liste_termes_etendu ')'	{
+																$5->push_back($1);
+																$$ = new BuiltInLiteral(*$3, $5);
+																delete $3;
+															}
+	;
+
+expr_arith :
+  	expr_arith_ter PLUS_OP expr_arith_ter		{
+													$$ = new BinaryArithExpr($2, $1, $3);
+												}
+  	| expr_arith_ter MINUS_OP expr_arith_ter	{
+													$$ = new BinaryArithExpr($2, $1, $3);
+												}
+  	| expr_arith_ter MULT_OP expr_arith_ter		{
+													$$ = new BinaryArithExpr($2, $1, $3);
+												}
+  	| expr_arith_ter DIV_OP expr_arith_ter		{
+													$$ = new BinaryArithExpr($2, $1, $3);
+												}
+  	| expr_arith_ter MOD_OP expr_arith_ter		{
+													$$ = new BinaryArithExpr($2, $1, $3);
+												}
+  	| ABS_OP '(' expr_arith_ter ')'				{
+													$$ = new UnaryArithExpr($1, $3);
+												}
+  	| '(' expr_arith_ter ')'					{ $$ = $2;}
+	;
+
+expr_arith_bis :
+  	constant_num 		{ $$= $1;}
+  	| variable			{ $$= $1;}
+  	| expr_arith		{ $$= $1;}
+	;
+
+expr_arith_ter :
+  	expr_arith_bis		{ $$= $1;}
+  	| built_in			{ $$= $1;}
+	;
+
+constant_symb :
+  	CONST_SYMB			{
+							$$ = SymbConst::new_SymbConst(*$1);
+							delete $1;
+						}
+	;
+
+constant_num :
+  	CONST_NUM					{
+									try {
+										$$ = NumConst::new_NumConst($1);
+									}
+									catch (const OutOfRangeNumConst&) {
+										std::cerr << "Out of range numeric constant " << std::endl;
+										yynerrs++;
+										YYERROR;
+									}
+								}
+  	| MINUS_OP CONST_NUM		{
+									try {
+										$$ = NumConst::new_NumConst(-$2);
+										USE($1);
+									}
+									catch (const OutOfRangeNumConst&) {
+										std::cerr << "Out of range numeric constant " << std::endl;
+										yynerrs++;
+										YYERROR;
+									}
+								}
+	;
+
+variable :
+  	VARIABLE				{
+								MapStrVar::iterator it = map.find(*$1);
+								if (it != map.end())
+									$$ = it->second;
+								else {
+									Variable* v = new Variable(*$1);
+									$$ = v;
+									map.insert(std::make_pair(*$1, v));
+									set.insert(v);
+								}
+								delete $1;
+							}
+	;
+
+/* Built-in predicate used in its reduced form, i.e. without its last output parameter.
+ * A new anonymous variable is created as that parameter, and replaces the predicate
+ * in the expression. The completed predicate is then added to the body.
+ */
+built_in :
+  	BUILT_IN '(' ')'						{
+												$$ = new Variable("");
+												set.insert($$);
+
+												Argument* args = new Argument();
+												args->push_back($$);
+												litVect.push_back(new BuiltInLiteral(*$1, args));
+												delete $1;
+											}
+  | BUILT_IN '(' liste_termes_etendu ')'	{
+												$$ = new Variable("");
+												set.insert($$);
+
+												$3->push_back($$);
+												litVect.push_back(new BuiltInLiteral(*$1, $3));
+												delete $1;
+											}
+	;
+
+commande :
+  	HIDE '.'									{
+													defaultShow = false;
+												}
+  	| HIDE CONST_SYMB DIV_OP CONST_NUM '.'		{
+													std::ostringstream oss;
+													oss << *$2 << '/' << $4;    // cast int2string
+													hideSet.insert(oss.str());
+													USE($3);
+													delete $2;
+												}
+  	| HIDE CONST_SYMB_NEG DIV_OP CONST_NUM '.'	{
+													std::ostringstream oss;
+													oss << *$2 << '/' << $4;    // cast int2string
+													hideSet.insert(oss.str());
+													USE($3);
+													delete $2;
+												}
+  	| HIDE error '.'							{
+													yyerror("`hide' directive malformed");
+													yyerrok;
+												}
+  	| SHOW CONST_SYMB DIV_OP CONST_NUM '.'		{
+													std::ostringstream oss;
+													oss << *$2 << '/' << $4;    // cast int2string
+													showSet.insert(oss.str());
+													USE($3);
+													delete $2;
+												}
+  	| SHOW CONST_SYMB_NEG DIV_OP CONST_NUM '.'	{
+													std::ostringstream oss;
+													oss << *$2 << '/' << $4;    // cast int2string
+													showSet.insert(oss.str());
+													USE($3);
+													delete $2;
+												}
+  	| SHOW error '.'							{
+													yyerror("`show' directive malformed");
+													yyerrok;
+												}
+  	| INCLUDE CONST_SYMB						{
+													// The name of a dynamic library must be surrounded by double quotes
+													if ((*$2)[0] != '"')
+														yyerror("`include' directive malformed");
+
+													else {
+														try {
+															// Remove double quotes
+															std::string name = $2->substr(1, $2->length() - 2);
+															BuiltInLiteral::addDynamicLibrary(name);
+														}
+														catch (const RuntimeExcept& e) {
+															yyerror(e.what());
+														}
+													}
+
+													delete $2;
+												}
+	;
+
+%%
+
+
+Program* readProg(const char *fileName, bool verbose){
+    defaultShow = true;
+    nregle = 0;
+    contradictory = false;
+
+    FILE *f = NULL;
+    prog = NULL;
+    try {
+        if (fileName) {
+            f = fopen(fileName, "r");
+            if (!f) {
+                std::cerr << "can not open `" << fileName << "`." << std::endl;
+                return NULL;
+       		}
+       		yyin = f;
+    	}	
+		prog = new Program();
+		prog->setVerbose(verbose);
+        graph = &prog->getGraph();
+        BuiltInLiteral::initDynamicLibraries();
+        yyparse();
+        if (defaultShow) {
+            if (!Predicate::initShow(true, hideSet))    // return false if some name does not appear anywhere else in the program
+                std::cerr << "Warning : hide directive for unknown predicate." << std::endl;
+            if (!showSet.empty())
+                std::cerr << "Warning : show directive for some predicate while default show is active." << std::endl;
+        } else {
+            if (!Predicate::initShow(false, showSet))   // return false if some name does not appear anywhere else in the program
+                std::cerr << "Warning : show directive for unknown predicate." << std::endl;
+            if (!hideSet.empty())
+                std::cerr << "Warning : hide directive for some predicate while default hide is active." << std::endl;
+        }
+        if (fileName)
+            fclose(f);
+        fileName = NULL;
+        hideSet.clear();
+        showSet.clear();
+        if (yynerrs) {
+            delete prog;
+            BuiltInLiteral::closeDynamicLibraries();
+            return NULL;
+        }
+
+        if (contradictory)
+            throw ContradictoryConclusion();
+        return prog;
+    }
+    catch (const ContradictoryConclusion&) {
+        if(fileName)
+            fclose(f);
+        delete prog;
+        throw;
+    }
+}
+
+
+
+void yyerror(const std::string& mess){
+    std::cerr << mess << std::endl;
+}
+
+
+
+/**
+ * @brief Prints an error message on the standard error output stream.
+ * @param mess message to be printed.
+ * 
+ * If @a mess is not @c NULL, it is first printed. Then indications about the
+ * location of the error are printed.
+ */
+void printErrorRule(const char* mess){
+    if (mess)
+        std::cerr << mess << '\n';
+    std::cerr << "\t(=>rule n° " << nregle << " - line " << yylineno << ')' << std::endl;
+}
