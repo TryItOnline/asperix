@@ -29,7 +29,7 @@
 #include "program.hpp"
 
 
-extern Program* readProg(const char*,bool);
+extern Program* readProg(const char*,int);
 
 using namespace std;
 
@@ -38,13 +38,15 @@ int main(int argc, char** argv){
     char* f = NULL;
     int n ; // maxInt
     int number = 1; // maximum number of answer-set to compute (0 for all)
-    bool verbose = false;
+    int verbosity = 1;
     bool error = false;
     char *endptr;
     for (int c = 1; c < argc && !error; c++) {
         if (argv[c][0] == '-') {    // option
             if (strcmp (&argv[c][1], "verbose") == 0)
-                verbose = true;
+                verbosity = 2;
+            else if (strcmp (&argv[c][1], "quiet") == 0)
+                verbosity = 0;
             else if (argv[c][1] == 'N') {
                 c++;
                 if (c < argc) {
@@ -76,6 +78,7 @@ int main(int argc, char** argv){
                 cout << "\t -N n : n is the greatest integer in your world (default : 1024)" << endl;
                 cout << "\t -F n : n is the maximum depth allowed for functional terms (default : 16)" << endl;
                 cout << "\t -verbose : verbose version" << endl;
+                cout << "\t -quiet : quiet version" << endl;
                 cout << "\t --help : print this help" << endl;
                 return 0;
             }
@@ -96,7 +99,7 @@ int main(int argc, char** argv){
     }
     Program* p = NULL;
     try {
-        p = readProg(f,verbose);
+        p = readProg(f,verbosity);
 	cout << endl;
         if (!p) {
             cerr << "Error in input" << endl;
@@ -118,7 +121,7 @@ int main(int argc, char** argv){
             if (!p->answerSetSearch(number))
                 cout << "############### No answer set" << endl;
         }
-        if (verbose)
+        if (verbosity > 1)
 	    cout << "Total choice points : " << p->getChoicePoints() << endl;
         delete p;
         BuiltInLiteral::closeDynamicLibraries();
@@ -126,7 +129,7 @@ int main(int argc, char** argv){
     }
     catch (const ContradictoryConclusion&) {    // during readProg or evaluate
         cout << "############### No answer set(ContradictoryConclusion)" << endl;
-	if (verbose)
+	if (verbosity > 1)
 	    cout << "Total choice points : " << ((p == NULL) ? 0 : p->getChoicePoints()) << endl;
         delete p;
         BuiltInLiteral::closeDynamicLibraries();

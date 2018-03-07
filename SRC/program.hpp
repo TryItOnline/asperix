@@ -63,8 +63,8 @@ class Program{
         int _max_answer_number;
 
         int _answer_number;
-	
-	bool _verbose;
+
+        int _verbosity;
 
         int _choice_points;
 
@@ -107,8 +107,8 @@ class Program{
         inline void setCurrentNonDefiniteRule(ruleMultimap::iterator it);
 
         inline void setCurrentScc(int i);
-	
-	inline void setVerbose(bool b);
+
+        inline void setVerbosity(int i);
 
 
 //********************************* OPERATORS ********************************//
@@ -253,8 +253,8 @@ inline void Program::setCurrentScc(int i){
     _currentScc = i;
 }
 
-inline void Program::setVerbose(bool b) {
-  _verbose = b;
+inline void Program::setVerbosity(int i) {
+  _verbosity = i;
 }
 
 //********************************* OPERATORS ********************************//
@@ -271,7 +271,7 @@ inline std::ostream& operator << (std::ostream& os, Program& p){
 
 inline void Program::addFactRule(Rule* r){
     _fact_rules.insert(r);
-    if (_verbose)
+    if (_verbosity > 1)
 	std::cout << *r;
 }
 
@@ -286,7 +286,7 @@ inline void Program::addNormalRule(Rule* r){
         r->getHead()->getPred()->addHeadNonDefiniteRule(r);
         r->createDefiniteClone();   // creation of a definite clone of rule r
     }
-    if (_verbose)
+    if (_verbosity > 1)
 	std::cout << *r;
 }
 
@@ -319,7 +319,7 @@ inline void Program::shiftRuleFromNDtoDWithoutErasing(Rule* r){
 inline void Program::addConstraintRule(Rule* r){
     _constraint_rules.insert(r);
     r->createDefiniteClone();   // creation of a definite clone of constraint rule r
-    if (_verbose)
+    if (_verbosity > 1)
 	std::cout << *r;
 }
 
@@ -456,9 +456,9 @@ inline void Program::restoreDeltasCurrentScc(){
 
 
 inline void Program::printAnswerSet(){
-    if (_verbose) 
+    if (_verbosity > 1)
 	std::cout<<"############### Answer set "<< _answer_number<<" ( "<<_choice_points<<" choice points, "<<_bad_choice<< " bad choice)"<<" ###############"<<std::endl;
-    else
+    else if (_verbosity > 0)
 	std::cout<<"############### Answer set "<< _answer_number<<" ###############"<<std::endl;
     Predicate::prettyPrintAllInstances();
     std::cout << std::endl;

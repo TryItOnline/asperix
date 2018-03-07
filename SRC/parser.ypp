@@ -735,7 +735,7 @@ commande :
 %%
 
 
-Program* readProg(const char *fileName, bool verbose){
+Program* readProg(const char *fileName, int verbosity){
     defaultShow = true;
     nregle = 0;
     contradictory = false;
@@ -752,7 +752,7 @@ Program* readProg(const char *fileName, bool verbose){
        		yyin = f;
     	}	
 		prog = new Program();
-		prog->setVerbose(verbose);
+		prog->setVerbosity(verbosity);
         graph = &prog->getGraph();
         BuiltInLiteral::initDynamicLibraries();
         yyparse();
