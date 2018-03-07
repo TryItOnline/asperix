@@ -19,7 +19,7 @@
 ############################################################################# 
 
 CXX = g++
-CXXFLAGS = -O3 -W -Wall -fno-strict-aliasing
+CXXFLAGS = -std=c++03 -O3 -W -Wall -fno-strict-aliasing
 LDFLAGS = -W -Wall -fno-strict-aliasing -g
 SRCS = parser.lex.cpp parser.cpp \
        num_const.cpp symb_const.cpp variable.cpp operator.cpp arith_expr.cpp \
