@@ -1,0 +1,5 @@
+*.o
+*.so
+asperix
+parser*cpp
+parser*.hpp
